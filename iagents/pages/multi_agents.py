@@ -92,7 +92,7 @@ class State(rx.State):
     
 color = "rgb(107,99,246)"
 
-def index():
+def multi_agents_index():
     return rx.container(
         rx.vstack(
             # Header section
@@ -171,6 +171,5 @@ def index():
         padding="40px"
     )
 
-
-app = rx.App()
-app.add_page(index)
+#app = rx.App()
+#app.add_page(index)

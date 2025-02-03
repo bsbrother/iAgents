@@ -1,4 +1,12 @@
+# uv
 reflex
 agno
 google-generativeai
 duckduckgo-search
+
+openai
+openinference-instrumentation
+pytz
+
+together
+opentelemetry-exporter-otlp
