@@ -7,16 +7,6 @@ import os
 import pytz
 import reflex as rx
 from openai import OpenAI
-
-# Import open-telemetry dependencies
-from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk import trace as trace_sdk
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from openinference.semconv.trace import SpanAttributes
-
-from openinference.instrumentation import using_prompt_template
 from sqlalchemy import or_, select
 from together import Together
 
@@ -27,10 +17,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 AI_MODEL: str = "UNKNOWN"
-OTEL_HEADERS: str | None = None
-OTEL_ENDPOINT: str | None = None
-RUN_WITH_OTEL: bool = False
-
 
 @functools.lru_cache
 def get_ai_client() -> OpenAI | Together:
@@ -93,65 +79,7 @@ def get_ai_model() -> None:
             print("Invalid AI provider. Please set AI_PROVIDER environment variable")
 
 
-def get_otel_headers() -> None:
-    global OTEL_HEADERS
-    global OTEL_ENDPOINT
-    global RUN_WITH_OTEL
-    otel_provider = os.environ.get("OTEL_PROVIDER")
-    match otel_provider:
-        case "arize":
-            OTEL_HEADERS = f"space_id={os.environ.get('ARIZE_SPACE_ID')},api_key={os.environ.get('ARIZE_API_KEY')}"
-            OTEL_ENDPOINT = "https://otlp.arize.com/v1"
-            RUN_WITH_OTEL = True
-
-        case "phoenix":
-            OTEL_HEADERS = f"api_key={os.environ.get('PHOENIX_API_KEY')}"
-            os.environ["PHOENIX_CLIENT_HEADERS"] = OTEL_HEADERS
-            OTEL_ENDPOINT = "https://app.phoenix.arize.com/v1/traces"
-            RUN_WITH_OTEL = True
-
-        case _:
-            OTEL_HEADERS = ""
-            OTEL_ENDPOINT = ""
-            print(
-                "Invalid OTEL provider. Please set OTEL_PROVIDER environment variable",
-            )
-
-
 get_ai_model()
-get_otel_headers()
-trace_attributes = {
-    "openinference.project.name": "chat_app",
-    "openinference.project.version": "v3",
-    "model_id": AI_MODEL,
-}
-
-# Set the tracer provider
-os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = OTEL_HEADERS
-tracer_provider = trace_sdk.TracerProvider(
-    resource=Resource(
-        attributes=trace_attributes,
-    ),
-)
-
-if RUN_WITH_OTEL:
-    tracer_provider.add_span_processor(
-        BatchSpanProcessor(
-            OTLPSpanExporter(
-                endpoint=OTEL_ENDPOINT,
-            ),
-        ),
-    )
-else:
-    tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
-
-trace.set_tracer_provider(
-    tracer_provider=tracer_provider,
-)
-
-# To get your tracer
-tracer = trace.get_tracer(__name__)
-
 
 MAX_QUESTIONS = 10
 INPUT_BOX_ID = "input-box"
@@ -183,7 +111,6 @@ class ChatState(rx.State):
     ) -> str:
         return self.timestamp.strftime("%I:%M %p")
 
-    @tracer.start_as_current_span("get_client_instance")
     def _get_client_instance(
         self,
     ) -> OpenAI | Together:
@@ -192,7 +119,6 @@ class ChatState(rx.State):
 
         raise ValueError("AI client not found")
 
-    @tracer.start_as_current_span("fetch_messages")
     def _fetch_messages(
         self,
     ) -> list[ChatInteraction]:
@@ -221,7 +147,6 @@ class ChatState(rx.State):
     ) -> None:
         self.chat_interactions = self._fetch_messages()
 
-
     def set_prompt(
         self,
         prompt: str,
@@ -233,7 +158,6 @@ class ChatState(rx.State):
     ) -> None:
         pass
 
-    @tracer.start_as_current_span("save_resulting_chat_interaction")
     def _save_resulting_chat_interaction(
         self,
         chat_interaction: ChatInteraction,
@@ -245,7 +169,6 @@ class ChatState(rx.State):
             session.commit()
             session.refresh(chat_interaction)
 
-    @tracer.start_as_current_span("check_saved_chat_interactions")
     async def _check_saved_chat_interactions(
         self,
         username: str,
@@ -287,7 +210,6 @@ class ChatState(rx.State):
     async def submit_prompt(
         self,
     ):
-        @tracer.start_as_current_span("fetch_chat_completion_session")
         async def _fetch_chat_completion_session(
             prompt: str,
         ):
@@ -347,16 +269,13 @@ class ChatState(rx.State):
 
             return stream
 
-        @tracer.start_as_current_span("set_ui_loading_state")
         def set_ui_loading_state() -> None:
             self.ai_loading = True
 
-        @tracer.start_as_current_span("clear_ui_loading_state")
         def clear_ui_loading_state() -> None:
             self.result = ""
             self.ai_loading = False
 
-        @tracer.start_as_current_span("add_new_chat_interaction")
         def add_new_chat_interaction() -> None:
             self.chat_interactions.append(
                 ChatInteraction(
@@ -384,38 +303,31 @@ class ChatState(rx.State):
 
             yield
 
-            with using_prompt_template(
-                template=prompt,
-            ):
-                stream = await _fetch_chat_completion_session(prompt)
-                clear_ui_loading_state()
-                add_new_chat_interaction()
-                yield
+            stream = await _fetch_chat_completion_session(prompt)
+            clear_ui_loading_state()
+            add_new_chat_interaction()
+            yield
 
-                try:
-                    for item in stream:
-                        if item.choices and item.choices[0] and item.choices[0].delta:
-                            answer_text = item.choices[0].delta.content
-                            # Ensure answer_text is not None before concatenation
-                            if answer_text is not None:
-                                self.chat_interactions[-1].answer += answer_text
+            try:
+                for item in stream:
+                    if item.choices and item.choices[0] and item.choices[0].delta:
+                        answer_text = item.choices[0].delta.content
+                        # Ensure answer_text is not None before concatenation
+                        if answer_text is not None:
+                            self.chat_interactions[-1].answer += answer_text
 
-                            else:
-                                answer_text = ""
-                                self.chat_interactions[-1].answer += answer_text
+                        else:
+                            answer_text = ""
+                            self.chat_interactions[-1].answer += answer_text
 
-                            yield rx.scroll_to(
-                                elem_id=INPUT_BOX_ID,
-                            )
+                        yield rx.scroll_to(
+                            elem_id=INPUT_BOX_ID,
+                        )
 
-                except StopAsyncIteration:
-                    raise
+            except StopAsyncIteration:
+                raise
 
-                self.result = self.chat_interactions[-1].answer
-                trace.get_current_span().set_attribute(
-                    SpanAttributes.OUTPUT_VALUE,
-                    self.result,
-                )
+            self.result = self.chat_interactions[-1].answer
 
         self._save_resulting_chat_interaction(
             chat_interaction=self.chat_interactions[-1],
