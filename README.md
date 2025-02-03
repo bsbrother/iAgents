@@ -39,8 +39,10 @@ iAgents built with Reflex and DeepSeek R1/Gemini/LLMs etc. enables users to uplo
      ```
 
 5. **Run the Reflex application**:  
-   Start the Reflex server with:  
    ```bash
+   reflex db init
+   reflex db migrate
+   reflex init
    reflex run
    ```
 
