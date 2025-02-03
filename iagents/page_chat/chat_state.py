@@ -45,7 +45,7 @@ def get_ai_client() -> OpenAI | Together:
 def get_ai_chat_completion_kwargs() -> dict:
     ai_provider = os.environ.get("AI_PROVIDER")
     common = dict(
-        max_tokens=512,
+        max_tokens=8192,
         temperature=0.7,
         top_p=0.7,
         stop=["<|eot_id|>", "<|eom_id|>"],
@@ -226,28 +226,8 @@ class ChatState(rx.State):
                     },
                 ]
                 for chat_interaction in self.chat_interactions:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": chat_interaction.prompt,
-                                },
-                            ],
-                        },
-                    )
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": chat_interaction.answer,
-                                },
-                            ],
-                        },
-                    )
+                    messages.append({"role": "user", "content": chat_interaction.prompt})
+                    messages.append({"role": "assistant", "content": chat_interaction.answer})
 
                 messages.append(
                     {
